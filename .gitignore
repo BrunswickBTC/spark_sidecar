@@ -1,3 +1,8 @@
 spark-sidecar-state.json
 node_modules/
 result
+.bash_history
+.gitconfig
+.lesshst
+.npm/
+.ssh/
