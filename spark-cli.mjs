@@ -14,6 +14,20 @@ function usage() {
   spark-cli payment send --bolt11 INVOICE [--max-fee-sats N] [--amount-sats N] [--yes] [--json]
   spark-cli payment get ID [--json]
   spark-cli mnemonic set --stdin [--json]
+  spark-cli identity [--json]
+  spark-cli deposit single-use|static|static-addresses [--json]
+  spark-cli transfer send --to SPARK_ADDRESS --amount-sats N [--yes] [--json]
+  spark-cli transfer get ID [--json]
+  spark-cli transfer list [--limit N] [--offset N] [--json]
+  spark-cli withdraw quote --address BTC_ADDRESS --amount-sats N [--json]
+  spark-cli withdraw send --address BTC_ADDRESS --amount-sats N --exit-speed FAST|MEDIUM|SLOW --fee-quote-id ID --fee-amount-sats N [--yes] [--json]
+  spark-cli withdraw get ID [--json]
+  spark-cli tokens balance [--json]
+  spark-cli tokens l1-address [--json]
+  spark-cli tokens transfer --token-id ID --amount N --to SPARK_ADDRESS [--yes] [--json]
+  spark-cli tokens transactions [--hash TXID ...] [--token-id ID] [--json]
+  spark-cli status optimization [--json]
+  spark-cli settings [--json]
 
 Environment:
   SPARK_SIDECAR_URL       Sidecar base URL (default: http://127.0.0.1:8765)
@@ -90,6 +104,22 @@ async function main() {
   else if (resource === 'payment' && action === 'send') { await confirmSend(args); result = await request('POST', '/v1/payments', {bolt11: value(args, '--bolt11', true), max_fee_sats: numberArg(args, '--max-fee-sats', 0), amount_sats: numberArg(args, '--amount-sats')}) }
   else if (resource === 'payment' && action === 'get') { const id = args.shift() || fail('missing payment ID'); result = await request('GET', `/v1/payments/${encodeURIComponent(id)}`) }
   else if (resource === 'mnemonic' && action === 'set' && has(args, '--stdin')) { const mnemonic = await readStdin(); if (!mnemonic) fail('empty mnemonic on stdin'); result = await request('POST', '/v1/mnemonic', {mnemonic}) }
+  else if (resource === 'identity' && action === undefined) result = await request('GET', '/v1/identity')
+  else if (resource === 'deposit' && action === 'single-use') result = await request('GET', '/v1/deposit/single-use')
+  else if (resource === 'deposit' && action === 'static') result = await request('GET', '/v1/deposit/static')
+  else if (resource === 'deposit' && action === 'static-addresses') result = await request('GET', '/v1/deposit/static/addresses')
+  else if (resource === 'transfer' && action === 'send') { await confirmSend(args); result = await request('POST', '/v1/transfer', {amount_sats: numberArg(args, '--amount-sats', undefined, true), receiver_spark_address: value(args, '--to', true)}) }
+  else if (resource === 'transfer' && action === 'get') { const id = args.shift() || fail('missing transfer ID'); result = await request('POST', '/v1/transfer/get', {id}) }
+  else if (resource === 'transfer' && action === 'list') result = await request('POST', '/v1/transfers/list', {limit: numberArg(args, '--limit'), offset: numberArg(args, '--offset')})
+  else if (resource === 'withdraw' && action === 'quote') result = await request('POST', '/v1/withdraw/quote', {amount_sats: numberArg(args, '--amount-sats', undefined, true), withdrawal_address: value(args, '--address', true)})
+  else if (resource === 'withdraw' && action === 'send') { await confirmSend(args); result = await request('POST', '/v1/withdraw', {onchain_address: value(args, '--address', true), amount_sats: numberArg(args, '--amount-sats', undefined, true), exit_speed: value(args, '--exit-speed', true), fee_quote_id: value(args, '--fee-quote-id', true), fee_amount_sats: numberArg(args, '--fee-amount-sats', undefined, true), deduct_fee_from_withdrawal_amount: true}) }
+  else if (resource === 'withdraw' && action === 'get') { const id = args.shift() || fail('missing withdrawal ID'); result = await request('POST', '/v1/withdraw/get', {id}) }
+  else if (resource === 'tokens' && action === 'balance') { result = (await request('POST', '/v1/balance', {})).token_balances }
+  else if (resource === 'tokens' && action === 'l1-address') result = await request('GET', '/v1/tokens/l1-address')
+  else if (resource === 'tokens' && action === 'transfer') { await confirmSend(args); result = await request('POST', '/v1/tokens/transfer', {token_identifier: value(args, '--token-id', true), token_amount: value(args, '--amount', true), receiver_spark_address: value(args, '--to', true), output_selection_strategy: value(args, '--strategy')}) }
+  else if (resource === 'tokens' && action === 'transactions') { const hashes = args.filter((x, i) => x === '--hash' ? args[i + 1] : false); result = await request('POST', '/v1/tokens/transactions', hashes.length ? {transaction_hashes: hashes} : {token_identifiers: value(args, '--token-id') ? [value(args, '--token-id')] : undefined}) }
+  else if (resource === 'status' && action === 'optimization') result = await request('POST', '/v1/status/optimization', {})
+  else if (resource === 'settings' && action === undefined) result = await request('GET', '/v1/settings')
   else usage()
   output(result, args)
 }

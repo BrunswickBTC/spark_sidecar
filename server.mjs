@@ -210,9 +210,26 @@ async function shutdown() {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
+function jsonSafe(value) {
+  if (typeof value === 'bigint') return value.toString()
+  if (value instanceof Map) return Object.fromEntries([...value.entries()].map(([k, v]) => [k, jsonSafe(v)]))
+  if (Array.isArray(value)) return value.map(jsonSafe)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, jsonSafe(v)]))
+  return value
+}
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {'content-type': 'application/json'})
-  res.end(JSON.stringify(payload))
+  res.end(JSON.stringify(jsonSafe(payload)))
+}
+async function requireWallet() {
+  if (!mnemonic) throw new Error('missing_mnemonic')
+  return await getWallet()
+}
+function parseDate(value, field) {
+  if (value === undefined || value === null) return undefined
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) throw new Error(`Invalid ${field}`)
+  return date
 }
 
 async function readJson(req) {
@@ -621,10 +638,12 @@ const server = http.createServer(async (req, res) => {
       }
       const wallet = await getWallet()
       const balance = await wallet.getBalance()
-      const sats = BigInt(balance.balance)
+      const sats = BigInt(balance.satsBalance?.available ?? balance.balance)
       return sendJson(res, 200, {
         balance_sats: sats.toString(),
         balance_msat: (sats * 1000n).toString(),
+        sats_balance: balance.satsBalance,
+        token_balances: balance.tokenBalances,
         status: 'ok'
       })
     }
@@ -708,6 +727,77 @@ const server = http.createServer(async (req, res) => {
 
         return sendJson(res, 500, {error: message})
       }
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/identity') {
+      const wallet = await requireWallet()
+      return sendJson(res, 200, {identity_public_key: await wallet.getIdentityPublicKey(), spark_address: await wallet.getSparkAddress()})
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/deposit/single-use') {
+      const wallet = await requireWallet(); return sendJson(res, 200, {address: await wallet.getSingleUseDepositAddress()})
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/deposit/static') {
+      const wallet = await requireWallet(); return sendJson(res, 200, {address: await wallet.getStaticDepositAddress()})
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/deposit/static/addresses') {
+      const wallet = await requireWallet(); return sendJson(res, 200, {addresses: await wallet.queryStaticDepositAddresses()})
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/deposit/utxos') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      if (Array.isArray(body.addresses)) return sendJson(res, 200, await wallet.getUtxosForDepositAddresses(body))
+      return sendJson(res, 200, {utxos: await wallet.getUtxosForDepositAddress(body.address, body.limit, body.offset, body.exclude_claimed)})
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/transfer') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      return sendJson(res, 200, await wallet.transfer({amountSats: Number(body.amount_sats), receiverSparkAddress: body.receiver_spark_address}))
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/transfers/list') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      return sendJson(res, 200, await wallet.getTransfers(body.limit, body.offset, parseDate(body.created_after, 'created_after'), parseDate(body.created_before, 'created_before')))
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/transfer/get') {
+      const wallet = await requireWallet(); const body = await readJson(req); return sendJson(res, 200, await wallet.getTransfer(body.id))
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/transfer/ssp') {
+      const wallet = await requireWallet(); const body = await readJson(req); return sendJson(res, 200, await wallet.getTransferFromSsp(body.id))
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/withdraw/quote') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      return sendJson(res, 200, await wallet.getWithdrawalFeeQuote({amountSats: Number(body.amount_sats), withdrawalAddress: body.withdrawal_address}))
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/withdraw') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      return sendJson(res, 200, await wallet.withdraw({onchainAddress: body.onchain_address, amountSats: body.amount_sats === undefined ? undefined : Number(body.amount_sats), exitSpeed: body.exit_speed, feeQuote: body.fee_quote, feeAmountSats: body.fee_amount_sats === undefined ? undefined : Number(body.fee_amount_sats), feeQuoteId: body.fee_quote_id, deductFeeFromWithdrawalAmount: body.deduct_fee_from_withdrawal_amount ?? true}))
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/withdraw/get') {
+      const wallet = await requireWallet(); const body = await readJson(req); return sendJson(res, 200, await wallet.getCoopExitRequest(body.id))
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/tokens/l1-address') {
+      const wallet = await requireWallet(); return sendJson(res, 200, {address: await wallet.getTokenL1Address()})
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/tokens/transfer') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      const txid = await wallet.transferTokens({tokenIdentifier: body.token_identifier, tokenAmount: BigInt(body.token_amount), receiverSparkAddress: body.receiver_spark_address, outputSelectionStrategy: body.output_selection_strategy})
+      return sendJson(res, 200, {transaction_id: txid, status: 'submitted'})
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/tokens/transactions') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      if (Array.isArray(body.transaction_hashes)) return sendJson(res, 200, await wallet.queryTokenTransactionsByTxHashes(body.transaction_hashes))
+      return sendJson(res, 200, await wallet.queryTokenTransactionsWithFilters(body))
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/tokens/invoice') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      return sendJson(res, 200, {spark_invoice: await wallet.createTokensInvoice({amount: body.amount === undefined ? undefined : BigInt(body.amount), tokenIdentifier: body.token_identifier, memo: body.memo, senderSparkAddress: body.sender_spark_address, expiryTime: parseDate(body.expiry_time, 'expiry_time')})})
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/sats/invoice') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      return sendJson(res, 200, {spark_invoice: await wallet.createSatsInvoice({amount: body.amount === undefined ? undefined : Number(body.amount), memo: body.memo, senderSparkAddress: body.sender_spark_address, expiryTime: parseDate(body.expiry_time, 'expiry_time')})})
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/status/optimization') {
+      const wallet = await requireWallet(); return sendJson(res, 200, {optimization_in_progress: await wallet.isOptimizationInProgress(), token_optimization_in_progress: await wallet.isTokenOptimizationInProgress()})
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/settings') {
+      const wallet = await requireWallet(); return sendJson(res, 200, await wallet.getWalletSettings())
     }
 
     const parts = url.pathname.split('/').filter(Boolean)
