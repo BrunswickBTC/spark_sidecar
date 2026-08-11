@@ -273,11 +273,45 @@ const SEND_FAILURE_STATUSES = new Set([
   'USER_TRANSFER_VALIDATION_FAILED',
   'USER_SWAP_RETURN_FAILED'
 ])
+const SEND_PENDING_STATUSES = new Set([
+  'CREATED',
+  'REQUEST_VALIDATED',
+  'LIGHTNING_PAYMENT_INITIATED',
+  'PENDING_USER_SWAP_RETURN',
+  'USER_SWAP_RETURNED'
+])
 const RECEIVE_SUCCESS_STATUSES = new Set([
   'LIGHTNING_PAYMENT_RECEIVED',
   'TRANSFER_COMPLETED',
   'PAYMENT_PREIMAGE_RECOVERED'
 ])
+const RECEIVE_FAILURE_STATUSES = new Set([
+  'TRANSFER_FAILED',
+  'PAYMENT_PREIMAGE_RECOVERING_FAILED',
+  'REFUND_SIGNING_FAILED',
+  'REFUND_SIGNING_COMMITMENTS_QUERYING_FAILED',
+  'TRANSFER_CREATION_FAILED'
+])
+const RECEIVE_PENDING_STATUSES = new Set([
+  'INVOICE_CREATED',
+  'TRANSFER_CREATED'
+])
+
+function classifySendStatus(status) {
+  if (SEND_SUCCESS_STATUSES.has(status)) return 'success'
+  if (SEND_FAILURE_STATUSES.has(status)) return 'failed'
+  if (SEND_PENDING_STATUSES.has(status)) return 'pending'
+  console.warn(`Unknown Spark send payment status: ${status}`)
+  return 'unknown'
+}
+
+function classifyReceiveStatus(status) {
+  if (RECEIVE_SUCCESS_STATUSES.has(status)) return 'success'
+  if (RECEIVE_FAILURE_STATUSES.has(status)) return 'failed'
+  if (RECEIVE_PENDING_STATUSES.has(status)) return 'pending'
+  console.warn(`Unknown Spark receive invoice status: ${status}`)
+  return 'unknown'
+}
 
 function isSendTerminal(status) {
   return SEND_SUCCESS_STATUSES.has(status) || SEND_FAILURE_STATUSES.has(status)
@@ -613,6 +647,7 @@ const server = http.createServer(async (req, res) => {
         payment_request: invoice.invoice.encodedInvoice,
         payment_hash: invoice.invoice.paymentHash,
         status: invoice.status,
+        status_class: classifyReceiveStatus(invoice.status),
         preimage: invoice.paymentPreimage || null
       })
     }
@@ -657,6 +692,7 @@ const server = http.createServer(async (req, res) => {
           checking_id: payment.id,
           payment_hash: paymentHash,
           status: payment.status,
+          status_class: classifySendStatus(payment.status),
           fee_msat: feeToMsat(payment.fee),
           preimage: payment.paymentPreimage || null
         })
@@ -684,6 +720,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         checking_id: invoice.id,
         status: invoice.status,
+        status_class: classifyReceiveStatus(invoice.status),
         payment_hash: invoice.invoice.paymentHash,
         preimage: invoice.paymentPreimage || null
       })
@@ -709,6 +746,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         checking_id: requestedId,
         status: payment.status,
+        status_class: classifySendStatus(payment.status),
         fee_msat: feeToMsat(payment.fee),
         preimage: payment.paymentPreimage || null
       })
