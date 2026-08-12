@@ -747,6 +747,11 @@ const server = http.createServer(async (req, res) => {
       if (Array.isArray(body.addresses)) return sendJson(res, 200, await wallet.getUtxosForDepositAddresses(body))
       return sendJson(res, 200, {utxos: await wallet.getUtxosForDepositAddress(body.address, body.limit, body.offset, body.exclude_claimed)})
     }
+    if (req.method === 'POST' && url.pathname === '/v1/deposit/claim') {
+      const wallet = await requireWallet(); const body = await readJson(req)
+      if (!body.txid) return sendJson(res, 400, {error: 'Missing txid'})
+      return sendJson(res, 200, await wallet.claimDeposit(body.txid))
+    }
     if (req.method === 'POST' && url.pathname === '/v1/transfer') {
       const wallet = await requireWallet(); const body = await readJson(req)
       return sendJson(res, 200, await wallet.transfer({amountSats: Number(body.amount_sats), receiverSparkAddress: body.receiver_spark_address}))
