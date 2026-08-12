@@ -211,6 +211,24 @@ async function shutdown() {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
+function bytesToHex(value) {
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('hex')
+  if (Buffer.isBuffer(value)) return value.toString('hex')
+  return value
+}
+
+function normalizeTransfer(transfer) {
+  if (!transfer || typeof transfer !== 'object') return transfer
+  return {
+    ...transfer,
+    senderIdentityPublicKey: bytesToHex(transfer.senderIdentityPublicKey),
+    receiverIdentityPublicKey: bytesToHex(transfer.receiverIdentityPublicKey),
+    createdTime: transfer.createdTime instanceof Date ? transfer.createdTime.toISOString() : transfer.createdTime,
+    updatedTime: transfer.updatedTime instanceof Date ? transfer.updatedTime.toISOString() : transfer.updatedTime,
+    totalValue: transfer.totalValue === undefined ? undefined : Number(transfer.totalValue)
+  }
+}
+
 function jsonSafe(value) {
   if (typeof value === 'bigint') return value.toString()
   if (value instanceof Map) return Object.fromEntries([...value.entries()].map(([k, v]) => [k, jsonSafe(v)]))
@@ -774,7 +792,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/v1/transfers/list') {
       const wallet = await requireWallet(); const body = await readJson(req)
-      return sendJson(res, 200, await wallet.getTransfers(body.limit, body.offset, parseDate(body.created_after, 'created_after'), parseDate(body.created_before, 'created_before')))
+      const result = await wallet.getTransfers(body.limit, body.offset, parseDate(body.created_after, 'created_after'), parseDate(body.created_before, 'created_before'))
+      return sendJson(res, 200, {...result, transfers: (result?.transfers || []).map(normalizeTransfer)})
     }
     if (req.method === 'POST' && url.pathname === '/v1/transfer/get') {
       const wallet = await requireWallet(); const body = await readJson(req); return sendJson(res, 200, await wallet.getTransfer(body.id))
