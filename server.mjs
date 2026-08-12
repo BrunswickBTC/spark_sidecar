@@ -9,6 +9,7 @@ const HOST = process.env.SPARK_SIDECAR_HOST || '127.0.0.1'
 const API_KEY = process.env.SPARK_SIDECAR_API_KEY || ''
 let mnemonic = process.env.SPARK_MNEMONIC || ''
 const NETWORK = process.env.SPARK_NETWORK || 'MAINNET'
+const ELECTRS_URL = process.env.SPARK_ELECTRS_URL || (NETWORK === 'REGTEST' ? 'https://regtest-mempool.us-west-2.sparkinfra.net/api' : 'https://mempool.space/api')
 const MULTIPLICITY = parseInt(process.env.SPARK_MULTIPLICITY || '3', 10)
 const PAY_WAIT_MS = parseInt(process.env.SPARK_PAY_WAIT_MS || '4000', 10)
 const PAY_POLL_MS = parseInt(process.env.SPARK_PAY_POLL_MS || '500', 10)
@@ -225,6 +226,17 @@ async function requireWallet() {
   if (!mnemonic) throw new Error('missing_mnemonic')
   return await getWallet()
 }
+async function enrichDepositUtxos(utxos) {
+  return await Promise.all(utxos.map(async utxo => {
+    const response = await fetch(`${ELECTRS_URL}/tx/${utxo.txid}`)
+    if (!response.ok) throw new Error(`Unable to retrieve transaction ${utxo.txid}: HTTP ${response.status}`)
+    const transaction = await response.json()
+    const value = transaction?.vout?.[Number(utxo.vout)]?.value
+    if (!Number.isFinite(value) || value <= 0) throw new Error(`Transaction ${utxo.txid} output ${utxo.vout} has no positive value`)
+    return {...utxo, amount_sats: Math.round(value * 100_000_000), confirmed: true}
+  }))
+}
+
 function parseDate(value, field) {
   if (value === undefined || value === null) return undefined
   const date = new Date(value)
@@ -744,8 +756,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/v1/deposit/utxos') {
       const wallet = await requireWallet(); const body = await readJson(req)
-      if (Array.isArray(body.addresses)) return sendJson(res, 200, await wallet.getUtxosForDepositAddresses(body))
-      return sendJson(res, 200, {utxos: await wallet.getUtxosForDepositAddress(body.address, body.limit, body.offset, body.exclude_claimed)})
+      if (Array.isArray(body.addresses)) {
+        const result = await wallet.getUtxosForDepositAddresses(body)
+        return sendJson(res, 200, {...result, utxos: await enrichDepositUtxos(result.utxos)})
+      }
+      const utxos = await wallet.getUtxosForDepositAddress(body.address, body.limit, body.offset, body.exclude_claimed)
+      return sendJson(res, 200, {utxos: await enrichDepositUtxos(utxos)})
     }
     if (req.method === 'POST' && url.pathname === '/v1/deposit/claim') {
       const wallet = await requireWallet(); const body = await readJson(req)
