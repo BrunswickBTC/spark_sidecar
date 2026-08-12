@@ -251,7 +251,8 @@ async function enrichDepositUtxos(utxos) {
     const transaction = await response.json()
     const value = transaction?.vout?.[Number(utxo.vout)]?.value
     if (!Number.isFinite(value) || value <= 0) throw new Error(`Transaction ${utxo.txid} output ${utxo.vout} has no positive value`)
-    return {...utxo, amount_sats: Math.round(value * 100_000_000), confirmed: true}
+    // Electrs/mempool returns vout.value in satoshis, not BTC.
+    return {...utxo, amount_sats: Math.round(value), confirmed: true}
   }))
 }
 
