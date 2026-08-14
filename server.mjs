@@ -7,6 +7,17 @@ import {SparkWallet, SparkWalletEvent} from '@buildonspark/spark-sdk'
 const PORT = parseInt(process.env.SPARK_SIDECAR_PORT || '8765', 10)
 const HOST = process.env.SPARK_SIDECAR_HOST || '127.0.0.1'
 const API_KEY = process.env.SPARK_SIDECAR_API_KEY || ''
+const SIDECAR_API_VERSION = 1
+const SIDECAR_VERSION = process.env.SPARK_SIDECAR_VERSION || '0.2.0'
+let SDK_VERSION = process.env.SPARK_SDK_VERSION || 'unknown'
+try {
+  SDK_VERSION = JSON.parse(fs.readFileSync(new URL('./node_modules/@buildonspark/spark-sdk/package.json', import.meta.url), 'utf8')).version || SDK_VERSION
+} catch (_) {}
+const SIDECAR_CAPABILITIES = [
+  'identity', 'settings', 'balance', 'optimization', 'static_addresses',
+  'transfers', 'deposit_utxos', 'deposit_claim', 'transfer',
+  'withdrawal_quote', 'withdrawal'
+]
 let mnemonic = process.env.SPARK_MNEMONIC || ''
 const NETWORK = process.env.SPARK_NETWORK || 'MAINNET'
 const ELECTRS_URL = process.env.SPARK_ELECTRS_URL || (NETWORK === 'REGTEST' ? 'https://regtest-mempool.us-west-2.sparkinfra.net/api' : 'https://mempool.space/api')
@@ -640,6 +651,18 @@ const server = http.createServer(async (req, res) => {
 
   console.log(`${req.method} ${url.pathname}`)
   try {
+    if (req.method === 'GET' && url.pathname === '/v1/capabilities') {
+      return sendJson(res, 200, {
+        service: 'spark-sidecar',
+        sidecar_version: SIDECAR_VERSION,
+        api_contract: 'spark-sidecar-v1',
+        api_version: SIDECAR_API_VERSION,
+        sdk: {name: '@buildonspark/spark-sdk', version: SDK_VERSION},
+        network: NETWORK,
+        capabilities: SIDECAR_CAPABILITIES
+      })
+    }
+
     if (req.method === 'GET' && url.pathname === '/health') {
       return sendJson(res, 200, {status: 'ok'})
     }
